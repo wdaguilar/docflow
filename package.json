@@ -1,0 +1,14 @@
+{
+  "name": "docflow",
+  "private": true,
+  "scripts": {
+    "setup": "cd server && bun install && cd ../web && bun install",
+    "dev": "echo 'Run: bun run dev:server (port 3000) and bun run dev:web (port 5173)'",
+    "dev:server": "cd server && bun run dev",
+    "dev:web": "cd web && bun run dev",
+    "build": "cd web && bun run build",
+    "test": "cd server && bun test",
+    "seed": "cd server && bun src/seed.ts",
+    "start": "cd server && bun src/index.ts"
+  }
+}

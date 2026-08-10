@@ -1,0 +1,21 @@
+{
+  "name": "docflow-server",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@elysiajs/cors": "^1.1.1",
+    "@elysiajs/static": "^1.1.1",
+    "elysia": "^1.1.25",
+    "pdf-lib": "^1.17.1"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.3"
+  }
+}
