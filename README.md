@@ -4,7 +4,7 @@ An e-signing application. Upload a PDF, place signature boxes on it, send it to
 one or more signers, and get the executed copy back with a certificate page and
 a tamper-evident fingerprint.
 
-**Live URL:** [DocFlow](https://docflow-production-83f4.up.railway.app)
+**Live URL:** _add your deployed URL here_
 
 ---
 
@@ -124,7 +124,7 @@ bun run build && bun run start
 bun test          # from the repo root, or: cd server && bun test
 ```
 
-80 tests across six files. They target the logic that is genuinely easy to get
+123 tests — 105 on the server, 18 on the frontend. They target the logic that is genuinely easy to get
 wrong rather than the framework:
 
 - **`coords.test.ts`** — the top-left-to-bottom-left flip between browser and PDF
@@ -142,6 +142,11 @@ wrong rather than the framework:
 - **`auth.test.ts`** — email normalisation, password policy including the 72-byte
   hashing limit counted in bytes rather than characters, and session expiry
   boundaries.
+- **`recipients.test.ts`** — the send payload: signer emails, duplicate
+  recipients, boxes pointing at absent signers or non-existent pages, signers
+  with nowhere to sign, and expiry bounds.
+- **`web/tests/validate.test.ts`** — the client-side index remap (see below),
+  covering blank rows at the start, middle, and end of the signer list.
 - **`pdf.test.ts`** — real PDFs built in-memory, stamped, and re-parsed:
   page counts survive, repeat stamping works as sequential signing requires, and
   the certificate page overflows correctly on a long audit trail.
@@ -183,6 +188,21 @@ can never advance the queue twice. The HTTP layer holds no workflow logic.
 **Signatures are always images.** Typed signatures are rendered to a transparent
 canvas in the browser using the same script face shown in the preview, so both
 tabs produce a PNG and the server has one code path to embed.
+
+**Validation runs twice, and the server decides.** The browser checks the same
+rules for fast feedback, but every rule is re-applied server-side: a signature
+box must point at a real signer, sit on a page that exists, and fall inside that
+page; every signer must have somewhere to sign, or they would receive a link to
+a document they cannot complete; expiry is bounded, because the input's `min`
+attribute is trivially bypassed.
+
+**Signature boxes are remapped when signers are removed.** Boxes hold the
+*position* of their signer in the list. Drop a blank row from the middle and
+every position after it shifts, so a box that read "signer 2" now points at
+someone else — or at nobody. `prepareSend` rebuilds that mapping before sending,
+discards boxes belonging to removed rows, and the server rejects any index that
+still doesn't resolve. This was a real bug found while auditing the forms; the
+tests for it name the scenario directly.
 
 **Incremental stamping.** Each signature is burned into a working copy, so signer
 two sees signer one's mark in place rather than an empty box.

@@ -1,6 +1,7 @@
 import { Elysia, t } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { authContext, authRoutes } from "./auth";
+import { resolveExpiry, validateFields, validateSigners } from "./lib/recipients";
 import { staticPlugin } from "@elysiajs/static";
 import { existsSync } from "node:fs";
 import { db } from "./db";
@@ -147,28 +148,46 @@ const app = new Elysia()
         set.status = 409;
         return { error: "already_sent" };
       }
-      if (body.signers.length === 0) {
+
+      const checkedSigners = validateSigners(body.signers);
+      if (!checkedSigners.ok) {
         set.status = 400;
-        return { error: "signers_required" };
+        return { error: checkedSigners.error, message: checkedSigners.message };
       }
+
+      const checkedFields = validateFields(
+        body.fields,
+        checkedSigners.value.length,
+        doc.page_count,
+      );
+      if (!checkedFields.ok) {
+        set.status = 400;
+        return { error: checkedFields.error, message: checkedFields.message };
+      }
+
+      const expiry = resolveExpiry(body.expiresInDays);
+      if (!expiry.ok) {
+        set.status = 400;
+        return { error: expiry.error, message: expiry.message };
+      }
+      const expiresAt = expiry.value;
 
       const ip = clientIp(request, server as never);
       const ua = request.headers.get("user-agent");
 
       const tx = db.transaction(() => {
         const ids: string[] = [];
-        body.signers.forEach((s, i) => {
+        checkedSigners.value.forEach((s, i) => {
           const sid = newId();
           ids.push(sid);
           db.query(
             `INSERT INTO signers (id,document_id,name,email,token,order_index,status)
              VALUES (?,?,?,?,?,?,?)`,
-          ).run(sid, doc.id, s.name.trim(), s.email.trim().toLowerCase(), newToken(), i, "pending");
+          ).run(sid, doc.id, s.name, s.email, newToken(), i, "pending");
         });
 
-        for (const f of body.fields) {
-          const sid = ids[f.signerIndex];
-          if (!sid) continue;
+        for (const f of checkedFields.value) {
+          const sid = ids[f.signerIndex]!;
           db.query(
             `INSERT INTO fields (id,document_id,signer_id,kind,page,x,y,w,h)
              VALUES (?,?,?,?,?,?,?,?,?)`,
@@ -180,7 +199,7 @@ const app = new Elysia()
         ).run(
           "awaiting_others",
           body.mode ?? "sequential",
-          body.expiresInDays ? Date.now() + body.expiresInDays * 864e5 : null,
+          expiresAt,
           Date.now(),
           doc.id,
         );
@@ -201,7 +220,7 @@ const app = new Elysia()
         documentId: doc.id,
         actor: user.email,
         action: "Sent for signature",
-        detail: `${body.signers.length} recipient(s) · ${mode}`,
+        detail: `${checkedSigners.value.length} recipient(s) · ${mode}`,
         ip,
         userAgent: ua,
       });
@@ -216,7 +235,7 @@ const app = new Elysia()
             requester: doc.owner_email,
             title: doc.title,
             url: `${PUBLIC_URL}/sign/${s.token}`,
-            expires: body.expiresInDays ? Date.now() + body.expiresInDays * 864e5 : null,
+            expires: expiresAt,
           }),
         });
         repo.recordEvent({

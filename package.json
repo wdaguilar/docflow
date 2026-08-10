@@ -7,7 +7,7 @@
     "dev:server": "cd server && bun run dev",
     "dev:web": "cd web && bun run dev",
     "build": "cd web && bun run build",
-    "test": "cd server && bun test",
+    "test": "cd server && bun test && cd ../web && bun test",
     "seed": "cd server && bun src/seed.ts",
     "start": "cd server && bun src/index.ts"
   }

@@ -34,7 +34,7 @@ jobs:
         run: bun run typecheck
 
   build:
-    name: Build frontend
+    name: Frontend tests and build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -46,6 +46,14 @@ jobs:
       - name: Install web dependencies
         working-directory: web
         run: bun install --frozen-lockfile
+
+      - name: Run frontend unit tests
+        working-directory: web
+        run: bun test
+
+      - name: Typecheck frontend
+        working-directory: web
+        run: bun run typecheck
 
       - name: Build
         working-directory: web

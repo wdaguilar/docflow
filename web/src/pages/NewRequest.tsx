@@ -4,6 +4,7 @@ import { Shell } from "../components/Shell";
 import { PdfPages } from "../components/PdfPages";
 import { PdfIcon } from "../components/Icons";
 import { api, fileUrl, type DocSummary } from "../lib/api";
+import { looksLikeEmail, prepareSend } from "../lib/validate";
 
 interface Draft {
   signerIndex: number;
@@ -58,25 +59,22 @@ export function NewRequest() {
 
   const send = async () => {
     setError(null);
-    const clean = signers.filter((s) => s.name.trim() && s.email.trim());
-    if (clean.length === 0) return setError("Add at least one signer with a name and email.");
-    if (fields.length === 0) return setError("Place at least one signature box on the document.");
-    const covered = new Set(fields.map((f) => f.signerIndex));
-    const missing = clean.findIndex((_, i) => !covered.has(i));
-    if (missing !== -1)
-      return setError(`${clean[missing]!.name || "Signer " + (missing + 1)} has no signature box yet.`);
+
+    // Drops blank rows and remaps every box to its signer's new position.
+    const prepared = prepareSend(signers, fields, expiry);
+    if (!prepared.ok) return setError(prepared.message);
 
     setSending(true);
     try {
       await api.send(doc!.id, {
         mode,
         expiresInDays: expiry || undefined,
-        signers: clean,
-        fields,
+        signers: prepared.value.signers,
+        fields: prepared.value.fields,
       });
       nav(`/documents/${doc!.id}`);
-    } catch {
-      setError("Could not send the request. Try again.");
+    } catch (e: any) {
+      setError(e.friendly ?? "Could not send the request. Try again.");
       setSending(false);
     }
   };
@@ -240,8 +238,15 @@ export function NewRequest() {
                 />
                 <input
                   className="input"
+                  type="email"
                   placeholder="email@company.com"
                   value={s.email}
+                  aria-invalid={s.email.trim() !== "" && !looksLikeEmail(s.email)}
+                  style={
+                    s.email.trim() !== "" && !looksLikeEmail(s.email)
+                      ? { borderColor: "var(--bad)" }
+                      : undefined
+                  }
                   onFocus={() => setActive(i)}
                   onChange={(e) =>
                     setSigners((p) =>
