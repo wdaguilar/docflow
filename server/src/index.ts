@@ -1,5 +1,6 @@
 import { Elysia, t } from "elysia";
 import { cors } from "@elysiajs/cors";
+import { authContext, authRoutes } from "./auth";
 import { staticPlugin } from "@elysiajs/static";
 import { existsSync } from "node:fs";
 import { db } from "./db";
@@ -14,8 +15,8 @@ const PORT = Number(process.env.PORT ?? 3000);
 const PUBLIC_URL = process.env.PUBLIC_URL ?? `http://localhost:5173`;
 const MAX_UPLOAD = 15 * 1024 * 1024;
 
-/** Demo single-tenant owner. Swap for a real session when auth lands. */
-const OWNER = process.env.OWNER_EMAIL ?? "alex@docflow.app";
+/** Owner of documents created before accounts existed, and of seeded demo data. */
+const LEGACY_OWNER = process.env.OWNER_EMAIL ?? "alex@docflow.app";
 
 const clientIp = (req: Request, server: { requestIP?: (r: Request) => { address: string } | null }) =>
   req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
@@ -23,7 +24,9 @@ const clientIp = (req: Request, server: { requestIP?: (r: Request) => { address:
   null;
 
 const app = new Elysia()
-  .use(cors())
+  .use(cors({ credentials: true, origin: true }))
+  .use(authRoutes)
+  .use(authContext)
   .onError(({ code, error, set }) => {
     if (code === "NOT_FOUND") {
       set.status = 404;
@@ -37,11 +40,24 @@ const app = new Elysia()
   .get("/api/health", () => ({ ok: true, at: Date.now() }))
 
   // ── Requester ──────────────────────────────────────────────────────────
-  .get("/api/documents", () => repo.listDocuments(OWNER).map(repo.summarise))
+  .get("/api/documents", ({ user, set }) => {
+    if (!user) return (set.status = 401), { error: "unauthenticated" };
+    return repo.listDocuments(user.email).map(repo.summarise);
+  })
 
-  .get("/api/documents/:id", ({ params, set }) => {
+  /** Documents waiting on the signed-in user, matched by email address. */
+  .get("/api/inbox", ({ user, set }) => {
+    if (!user) return (set.status = 401), { error: "unauthenticated" };
+    return repo.listInbox(user.email);
+  })
+
+  .get("/api/documents/:id", ({ params, set, user }) => {
     const doc = repo.getDocument(params.id);
     if (!doc) return (set.status = 404), { error: "not_found" };
+    if (!user || doc.owner_email !== user.email) {
+      set.status = user ? 403 : 401;
+      return { error: user ? "not_yours" : "unauthenticated" };
+    }
     return {
       ...repo.summarise(doc),
       fields: repo.getFields(doc.id),
@@ -52,7 +68,8 @@ const app = new Elysia()
   /** Step 1 — upload. Creates a draft; no signers yet. */
   .post(
     "/api/documents",
-    async ({ body, set, request, server }) => {
+    async ({ body, set, request, server, user }) => {
+      if (!user) return (set.status = 401), { error: "unauthenticated" };
       const file = body.file;
       if (!file || file.size === 0) {
         set.status = 400;
@@ -87,7 +104,7 @@ const app = new Elysia()
       ).run(
         id,
         body.title?.trim() || file.name.replace(/\.pdf$/i, ""),
-        OWNER,
+        user.email,
         "draft",
         "sequential",
         name,
@@ -98,7 +115,7 @@ const app = new Elysia()
 
       repo.recordEvent({
         documentId: id,
-        actor: OWNER,
+        actor: user.email,
         action: "Document uploaded",
         detail: `${file.name} · ${pages} page${pages === 1 ? "" : "s"}`,
         ip: clientIp(request, server as never),
@@ -119,9 +136,13 @@ const app = new Elysia()
   /** Step 2 — add signers + placed fields, then send. */
   .post(
     "/api/documents/:id/send",
-    async ({ params, body, set, request, server }) => {
+    async ({ params, body, set, request, server, user }) => {
       const doc = repo.getDocument(params.id);
       if (!doc) return (set.status = 404), { error: "not_found" };
+      if (!user || doc.owner_email !== user.email) {
+        set.status = user ? 403 : 401;
+        return { error: user ? "not_yours" : "unauthenticated" };
+      }
       if (doc.status !== "draft") {
         set.status = 409;
         return { error: "already_sent" };
@@ -178,7 +199,7 @@ const app = new Elysia()
 
       repo.recordEvent({
         documentId: doc.id,
-        actor: OWNER,
+        actor: user.email,
         action: "Sent for signature",
         detail: `${body.signers.length} recipient(s) · ${mode}`,
         ip,
@@ -192,7 +213,7 @@ const app = new Elysia()
           subject: `Signature requested: ${doc.title}`,
           html: mail.signatureRequest({
             signer: s.name,
-            requester: OWNER,
+            requester: doc.owner_email,
             title: doc.title,
             url: `${PUBLIC_URL}/sign/${s.token}`,
             expires: body.expiresInDays ? Date.now() + body.expiresInDays * 864e5 : null,
@@ -228,21 +249,29 @@ const app = new Elysia()
     },
   )
 
-  .post("/api/documents/:id/void", ({ params, set }) => {
+  .post("/api/documents/:id/void", ({ params, set, user }) => {
     const doc = repo.getDocument(params.id);
     if (!doc) return (set.status = 404), { error: "not_found" };
+    if (!user || doc.owner_email !== user.email) {
+      set.status = user ? 403 : 401;
+      return { error: user ? "not_yours" : "unauthenticated" };
+    }
     if (doc.status === "completed") {
       set.status = 409;
       return { error: "already_completed" };
     }
     repo.touch(doc.id, "voided");
-    repo.recordEvent({ documentId: doc.id, actor: OWNER, action: "Document voided" });
+    repo.recordEvent({ documentId: doc.id, actor: user.email, action: "Document voided" });
     return repo.summarise(repo.getDocument(doc.id)!);
   })
 
-  .post("/api/documents/:id/remind", async ({ params, set }) => {
+  .post("/api/documents/:id/remind", async ({ params, set, user }) => {
     const doc = repo.getDocument(params.id);
     if (!doc) return (set.status = 404), { error: "not_found" };
+    if (!user || doc.owner_email !== user.email) {
+      set.status = user ? 403 : 401;
+      return { error: user ? "not_yours" : "unauthenticated" };
+    }
     const waiting = repo.getSigners(doc.id).filter((s) => s.status === "active");
     for (const s of waiting) {
       await mail.send({
@@ -250,7 +279,7 @@ const app = new Elysia()
         subject: `Reminder: ${doc.title} is waiting for you`,
         html: mail.signatureRequest({
           signer: s.name,
-          requester: OWNER,
+          requester: doc.owner_email,
           title: doc.title,
           url: `${PUBLIC_URL}/sign/${s.token}`,
           expires: doc.expires_at,
@@ -259,7 +288,7 @@ const app = new Elysia()
     }
     repo.recordEvent({
       documentId: doc.id,
-      actor: OWNER,
+      actor: user.email,
       action: "Reminder sent",
       detail: waiting.map((s) => s.email).join(", ") || "no one is waiting",
     });
@@ -267,9 +296,13 @@ const app = new Elysia()
   })
 
   /** The requester's copy — signed if complete, original otherwise. */
-  .get("/api/documents/:id/file", ({ params, set }) => {
+  .get("/api/documents/:id/file", ({ params, set, user }) => {
     const doc = repo.getDocument(params.id);
     if (!doc) return (set.status = 404), { error: "not_found" };
+    if (!user || doc.owner_email !== user.email) {
+      set.status = user ? 403 : 401;
+      return { error: user ? "not_yours" : "unauthenticated" };
+    }
     const name = doc.final_path ?? doc.working_path ?? doc.original_path;
     const file = Bun.file(repo.filePath(name));
     set.headers["content-type"] = "application/pdf";

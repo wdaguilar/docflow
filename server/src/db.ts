@@ -15,6 +15,22 @@ db.exec("PRAGMA journal_mode = WAL;");
 db.exec("PRAGMA foreign_keys = ON;");
 
 db.exec(`
+CREATE TABLE IF NOT EXISTS users (
+  id            TEXT PRIMARY KEY,
+  email         TEXT NOT NULL UNIQUE,
+  name          TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  created_at    INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id         TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  expires_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  user_agent TEXT
+);
+
 CREATE TABLE IF NOT EXISTS documents (
   id            TEXT PRIMARY KEY,
   title         TEXT NOT NULL,
@@ -65,10 +81,28 @@ CREATE TABLE IF NOT EXISTS audit_events (
   at          INTEGER NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_signers_email ON signers(email);
 CREATE INDEX IF NOT EXISTS idx_signers_doc ON signers(document_id);
 CREATE INDEX IF NOT EXISTS idx_fields_doc ON fields(document_id);
 CREATE INDEX IF NOT EXISTS idx_audit_doc ON audit_events(document_id, at);
 `);
+
+export interface UserRow {
+  id: string;
+  email: string;
+  name: string;
+  password_hash: string;
+  created_at: number;
+}
+
+export interface SessionRow {
+  id: string;
+  user_id: string;
+  expires_at: number;
+  created_at: number;
+  user_agent: string | null;
+}
 
 export interface DocumentRow {
   id: string;

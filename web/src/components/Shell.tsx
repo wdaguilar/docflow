@@ -1,15 +1,19 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import { Logo } from "./Logo";
-import { GridIcon, FileIcon, SendIcon, ShieldIcon } from "./Icons";
+import { GridIcon, FileIcon, SendIcon, ShieldIcon, InboxIcon } from "./Icons";
+import { useAuth } from "../lib/auth";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: <GridIcon />, end: true },
+  { to: "/inbox", label: "Need Your Signature", icon: <InboxIcon /> },
   { to: "/new", label: "New Request", icon: <FileIcon /> },
   { to: "/sent", label: "Sent Documents", icon: <SendIcon /> },
   { to: "/verify", label: "Verify", icon: <ShieldIcon /> },
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {
+  const { user, logout } = useAuth();
+  const nav_ = useNavigate();
   return (
     <>
       <div className="field" />
@@ -33,9 +37,23 @@ export function Shell({ children }: { children: React.ReactNode }) {
             ))}
           </nav>
           <div className="rail-foot">
-            Signed in as
-            <br />
-            <strong style={{ color: "var(--muted)" }}>alex@docflow.app</strong>
+            <div style={{ marginBottom: 8 }}>
+              Signed in as
+              <br />
+              <strong style={{ color: "var(--muted)" }}>{user?.name ?? "…"}</strong>
+              <br />
+              <span style={{ fontSize: 11.5 }}>{user?.email}</span>
+            </div>
+            <button
+              className="mini"
+              style={{ background: "transparent", color: "var(--dim)", borderColor: "var(--line)" }}
+              onClick={async () => {
+                await logout();
+                nav_("/login", { replace: true });
+              }}
+            >
+              Sign out
+            </button>
           </div>
         </aside>
         <main className="main">{children}</main>

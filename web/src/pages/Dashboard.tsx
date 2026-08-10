@@ -4,12 +4,14 @@ import { Shell } from "../components/Shell";
 import { StatusPill } from "../components/StatusPill";
 import { PdfIcon } from "../components/Icons";
 import { api, fileUrl, fmtDate, type DocSummary } from "../lib/api";
+import { useAuth } from "../lib/auth";
 
 export function Dashboard({ onlySent = false }: { onlySent?: boolean }) {
   const [docs, setDocs] = useState<DocSummary[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const nav = useNavigate();
+  const { user } = useAuth();
 
   const load = () => {
     api.list().then(setDocs).catch(() => setDocs([]));
@@ -42,7 +44,11 @@ export function Dashboard({ onlySent = false }: { onlySent?: boolean }) {
     <Shell>
       <div className="topline">
         <div>
-          <h1>{onlySent ? "Sent Documents" : "Welcome Back, Alex!"}</h1>
+          <h1>
+            {onlySent
+              ? "Sent Documents"
+              : `Welcome Back, ${user?.name?.split(" ")[0] ?? "there"}!`}
+          </h1>
           <p className="sub">
             {onlySent
               ? "Everything you've sent out, and where each one stands."

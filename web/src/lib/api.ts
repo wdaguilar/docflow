@@ -59,20 +59,64 @@ export interface SignerView {
 }
 
 export class ApiError extends Error {
-  constructor(public code: string, public status: number) {
-    super(code);
+  constructor(
+    public code: string,
+    public status: number,
+    public friendly?: string,
+  ) {
+    super(friendly ?? code);
   }
 }
 
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+}
+
+export interface InboxItem {
+  documentId: string;
+  title: string;
+  requester: string;
+  documentStatus: string;
+  myStatus: "pending" | "active" | "signed";
+  signedAt: number | null;
+  expiresAt: number | null;
+  updatedAt: number;
+  link: string | null;
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api${path}`, init);
+  // Session lives in an httpOnly cookie, so every call must carry credentials.
+  const res = await fetch(`/api${path}`, { credentials: "include", ...init });
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
-  if (!res.ok) throw new ApiError(data?.error ?? "request_failed", res.status);
+  if (!res.ok)
+    throw new ApiError(data?.error ?? "request_failed", res.status, data?.message);
   return data as T;
 }
 
 export const api = {
+  me: () => req<{ user: User | null }>("/auth/me"),
+
+  signup: (name: string, email: string, password: string) =>
+    req<{ user: User }>("/auth/signup", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name, email, password }),
+    }),
+
+  login: (email: string, password: string) =>
+    req<{ user: User }>("/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    }),
+
+  logout: () => req<{ ok: true }>("/auth/logout", { method: "POST" }),
+
+  inbox: () => req<InboxItem[]>("/inbox"),
+
   list: () => req<DocSummary[]>("/documents"),
   get: (id: string) => req<DocDetail>(`/documents/${id}`),
 

@@ -29,6 +29,8 @@ demo never depends on mail credentials being configured:
 
 | Feature | What it does |
 | --- | --- |
+| **Accounts** | Requesters sign up and own their documents. Signers never need one — a link is enough. |
+| **"Documents you need to sign" inbox** | Anything sent to your email address appears here once you have an account, including documents sent before you registered. |
 | **Multi-signer workflows** | Sequential (one at a time, with the baton passed automatically) or parallel (everyone at once). |
 | **Audit trail** | Every upload, open, signature, and notification is logged with timestamp, actor, IP, and user agent. |
 | **Certificate of completion** | The audit trail is rendered as PDF pages and bound onto the signed document, so the proof travels with the file. |
@@ -39,6 +41,29 @@ demo never depends on mail credentials being configured:
 | **Void** | Cancel an in-flight request; every outstanding link dies immediately. |
 | **Drag-and-drop placement** | Click anywhere on a rendered page to drop a box; click a box to remove it. |
 | **Email notifications** | Invitation, your-turn, reminder, and completion mails via Resend. |
+
+## The account model
+
+Signing **never** requires an account. A signing link is a capability token, and
+that is a deliberate product decision rather than a shortcut: every step placed
+in front of a signature costs completion rate, which is why DocuSign, Dropbox
+Sign, and Adobe Sign all let signers sign as guests.
+
+Accounts exist for two other reasons:
+
+- a **requester** needs to own their documents, so `/api/documents` is scoped to
+  the signed-in user and every document route checks ownership;
+- anyone who *does* have an account sees everything waiting on them in one place,
+  matched on email address.
+
+The two paths meet without colliding. Sign by link today, register next month,
+and the history is already in your inbox — same token underneath, second way in.
+
+Passwords are hashed with `Bun.password` (argon2id, no dependency). Sessions are
+opaque 32-character tokens in an httpOnly, SameSite=Lax cookie, `secure` in
+production, expiring after 30 days. Login returns the same message and does
+comparable work for a wrong password and an unknown address, so the endpoint
+cannot be used to discover which emails have accounts.
 
 ## Tech stack
 
@@ -60,11 +85,20 @@ bun run dev:server   # http://localhost:3000
 bun run dev:web      # http://localhost:5173  (proxies /api to :3000)
 ```
 
-Then, optionally, populate the dashboard with sample documents in every state:
+Then populate the dashboard with sample documents in every state:
 
 ```bash
 bun run seed
 ```
+
+That creates the demo account and signs you in with:
+
+```
+alex@docflow.app / docflow-demo-2026
+```
+
+It also leaves one document waiting in that account's own inbox, so both sides
+of the product are visible immediately.
 
 Production mode — one process serving everything on `:3000`:
 
@@ -79,7 +113,8 @@ bun run build && bun run start
 | `PORT` | `3000` | HTTP port |
 | `DATA_DIR` | `./data` | SQLite file and stored PDFs |
 | `PUBLIC_URL` | `http://localhost:5173` | Origin used to build signing links in emails |
-| `OWNER_EMAIL` | `alex@docflow.app` | The demo requester account |
+| `OWNER_EMAIL` | `alex@docflow.app` | Email used for the seeded demo account |
+| `SEED_PASSWORD` | `docflow-demo-2026` | Password for the seeded demo account |
 | `RESEND_API_KEY` | _unset_ | Enables real email; without it, mail is logged and links stay available in the dashboard |
 | `MAIL_FROM` | `DocFlow <onboarding@resend.dev>` | Sender address |
 
@@ -89,7 +124,7 @@ bun run build && bun run start
 bun test          # from the repo root, or: cd server && bun test
 ```
 
-55 tests across five files. They target the logic that is genuinely easy to get
+80 tests across six files. They target the logic that is genuinely easy to get
 wrong rather than the framework:
 
 - **`coords.test.ts`** — the top-left-to-bottom-left flip between browser and PDF
@@ -104,6 +139,9 @@ wrong rather than the framework:
   and precedence between denial reasons.
 - **`verify.test.ts`** — hashing, fingerprint formatting, and rejection of a
   truncated digest (so verification can't be passed with a prefix).
+- **`auth.test.ts`** — email normalisation, password policy including the 72-byte
+  hashing limit counted in bytes rather than characters, and session expiry
+  boundaries.
 - **`pdf.test.ts`** — real PDFs built in-memory, stamped, and re-parsed:
   page counts survive, repeat stamping works as sequential signing requires, and
   the certificate page overflows correctly on a long audit trail.
@@ -151,8 +189,7 @@ two sees signer one's mark in place rather than an empty box.
 
 ## What I would build next
 
-- Real authentication for requesters — right now the dashboard is a single demo
-  account, which is the honest limit of the current scope.
+- Password reset by email, and optional two-factor for requesters.
 - Reusable templates with saved field positions.
 - Webhooks on document completion.
 - Cryptographic PDF signatures (PAdES) rather than an image plus an external

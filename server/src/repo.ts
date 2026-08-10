@@ -79,6 +79,37 @@ export function touch(documentId: string, status?: string) {
   }
 }
 
+/**
+ * Documents waiting on this person as a signer, matched by email. This is what
+ * makes an account useful to a signer without ever being required of them: sign
+ * by link now, register later, and the history is already there.
+ */
+export function listInbox(email: string) {
+  const rows = db
+    .query<SignerRow & { doc_title: string; doc_status: string; owner: string; expires: number | null; updated: number }, [string]>(
+      `SELECT s.*, d.title AS doc_title, d.status AS doc_status,
+              d.owner_email AS owner, d.expires_at AS expires, d.updated_at AS updated
+         FROM signers s
+         JOIN documents d ON d.id = s.document_id
+        WHERE s.email = ? AND d.status != 'voided'
+        ORDER BY d.updated_at DESC`,
+    )
+    .all(email.toLowerCase());
+
+  return rows.map((r) => ({
+    documentId: r.document_id,
+    title: r.doc_title,
+    requester: r.owner,
+    documentStatus: r.doc_status,
+    myStatus: r.status,
+    signedAt: r.signed_at,
+    expiresAt: r.expires,
+    updatedAt: r.updated,
+    // Only handed out while the signature is actually due.
+    link: r.status === "active" ? `/sign/${r.token}` : null,
+  }));
+}
+
 /** Shape sent to the dashboard. */
 export function summarise(doc: DocumentRow) {
   const signers = getSigners(doc.id);

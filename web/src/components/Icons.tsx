@@ -58,6 +58,15 @@ export const ClockIcon = ({ size = 15 }) =>
     size,
   );
 
+export const InboxIcon = ({ size = 18 }) =>
+  wrap(
+    <g {...s}>
+      <path d="M3 12h5l1.5 3h5L16 12h5" />
+      <path d="M5.5 5h13l2.5 7v6a1.5 1.5 0 0 1-1.5 1.5H4.5A1.5 1.5 0 0 1 3 18v-6Z" />
+    </g>,
+    size,
+  );
+
 export const PdfIcon = ({ size = 17, mono = false }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
     <path

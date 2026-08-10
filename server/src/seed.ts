@@ -6,6 +6,34 @@
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 const API = process.env.SEED_API ?? "http://localhost:3000";
+const DEMO_EMAIL = process.env.OWNER_EMAIL ?? "alex@docflow.app";
+const DEMO_PASSWORD = process.env.SEED_PASSWORD ?? "docflow-demo-2026";
+
+/** Uploads require a session, so seeding signs in as the demo account first. */
+let cookie = "";
+
+async function authenticate() {
+  const body = JSON.stringify({
+    name: "Alex Rivera",
+    email: DEMO_EMAIL,
+    password: DEMO_PASSWORD,
+  });
+  const headers = { "content-type": "application/json" };
+
+  let res = await fetch(`${API}/api/auth/signup`, { method: "POST", headers, body });
+  if (res.status === 409) {
+    res = await fetch(`${API}/api/auth/login`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ email: DEMO_EMAIL, password: DEMO_PASSWORD }),
+    });
+  }
+  if (!res.ok) throw new Error(`could not authenticate: ${res.status}`);
+
+  cookie = res.headers.get("set-cookie")?.split(";")[0] ?? "";
+  if (!cookie) throw new Error("no session cookie returned");
+  console.log(`  · signed in as ${DEMO_EMAIL}`);
+}
 
 const PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -42,14 +70,18 @@ async function upload(title: string, clauses: string[]) {
     `${title}.pdf`,
   );
   fd.append("title", title);
-  const res = await fetch(`${API}/api/documents`, { method: "POST", body: fd });
+  const res = await fetch(`${API}/api/documents`, {
+    method: "POST",
+    body: fd,
+    headers: { cookie },
+  });
   return res.json() as Promise<{ id: string }>;
 }
 
 const send = (id: string, payload: unknown) =>
   fetch(`${API}/api/documents/${id}/send`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", cookie },
     body: JSON.stringify(payload),
   }).then((r) => r.json());
 
@@ -79,6 +111,7 @@ const CLAUSES = [
 ];
 
 console.log(`Seeding ${API}…`);
+await authenticate();
 
 // 1 — completed, two signers
 const a = await upload("Consulting Agreement", CLAUSES);
@@ -115,7 +148,7 @@ await send(c.id, {
   mode: "parallel",
   expiresInDays: 14,
   signers: [
-    { name: "Dana Okoye", email: "dana@brightfold.test" },
+    { name: "Alex Rivera", email: DEMO_EMAIL },
     { name: "Tomas Lindqvist", email: "tomas@brightfold.test" },
   ],
   fields: [box(0, 0.09), box(1, 0.53)],
@@ -126,4 +159,4 @@ console.log("  ✓ Mutual NDA — awaiting both");
 await upload("Employee Handbook Acknowledgement", CLAUSES.slice(0, 2));
 console.log("  ✓ Employee Handbook Acknowledgement — draft");
 
-console.log("Done.");
+console.log(`Done. Sign in with ${DEMO_EMAIL} / ${DEMO_PASSWORD}`);
