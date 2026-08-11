@@ -7,7 +7,17 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 const API = process.env.SEED_API ?? "http://localhost:3000";
 const DEMO_EMAIL = process.env.OWNER_EMAIL ?? "alex@docflow.app";
+/* The default is a published credential — fine for a laptop, unacceptable on a
+   public deployment, so production must supply its own. */
 const DEMO_PASSWORD = process.env.SEED_PASSWORD ?? "docflow-demo-2026";
+
+if (process.env.NODE_ENV === "production" && !process.env.SEED_PASSWORD) {
+  console.error(
+    "Refusing to seed production with the default demo password.\n" +
+      "Set SEED_PASSWORD to something private first.",
+  );
+  process.exit(1);
+}
 
 /** Uploads require a session, so seeding signs in as the demo account first. */
 let cookie = "";

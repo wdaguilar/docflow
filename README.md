@@ -124,7 +124,14 @@ bun run build && bun run start
 bun test          # from the repo root, or: cd server && bun test
 ```
 
-123 tests — 105 on the server, 18 on the frontend. They target the logic that is genuinely easy to get
+Take a backup at any time:
+
+```bash
+bun run backup            # writes to ./server/data/backups/<timestamp>
+bun run backup /some/path # or somewhere else
+```
+
+133 tests — 115 on the server, 18 on the frontend. They target the logic that is genuinely easy to get
 wrong rather than the framework:
 
 - **`coords.test.ts`** — the top-left-to-bottom-left flip between browser and PDF
@@ -147,6 +154,9 @@ wrong rather than the framework:
   with nowhere to sign, and expiry bounds.
 - **`web/tests/validate.test.ts`** — the client-side index remap (see below),
   covering blank rows at the start, middle, and end of the signer list.
+- **`ratelimit.test.ts`** — window boundaries, per-key isolation so one attacker
+  cannot lock out everyone else, counter reset on a correct password, and bucket
+  sweeping so the limiter cannot grow without bound.
 - **`pdf.test.ts`** — real PDFs built in-memory, stamped, and re-parsed:
   page counts survive, repeat stamping works as sequential signing requires, and
   the certificate page overflows correctly on a long audit trail.
@@ -168,6 +178,33 @@ fly deploy
 The volume matters: without it, SQLite and the stored PDFs are wiped on every
 redeploy. Any host that runs a Dockerfile with a persistent disk works the same
 way — Railway, Render, or a plain VPS.
+
+## Security posture
+
+Reviewed deliberately, with the fixes below covered by tests.
+
+| Area | Position |
+| --- | --- |
+| **Secrets** | Nothing committed. `RESEND_API_KEY` and all config come from the environment; `.env` is gitignored. The seed script refuses to run in production with its published default password. |
+| **Access control** | Every document route checks ownership against the session. Signing tokens pass through one `checkAccess` gate covering expiry, voiding, turn order, and reuse — applied to the PDF download as well as the metadata, so a spent token cannot still fetch the file. |
+| **Server validation** | Every client-side rule is re-applied server-side: signer emails, duplicates, expiry bounds, field-to-signer mapping, page ranges, and box geometry. Uploads are checked by magic bytes, not extension. |
+| **Rate limits** | Login, sign-up, signing-token access, uploads, and verification. Login is keyed on IP *and* account together, so an attacker cannot lock a real user out of their own account. A correct password clears the counter. |
+| **Error messages** | 500s return `server_error` and nothing else; the detail goes to the server log. Login returns identical responses for a wrong password and an unknown address. |
+| **Dependencies** | Six direct dependencies, all mainstream. `bun audit` reports no known vulnerabilities. |
+| **Backups** | `bun run backup` takes a consistent snapshot via SQLite `VACUUM INTO` plus every stored PDF. This is a manual step and the honest gap — see below. |
+
+### Known limitations
+
+- **Rate limiting is per-process.** Correct for the current single-machine
+  deployment; behind multiple replicas it would need shared state such as Redis.
+- **Backups are manual.** The script exists and works, but nothing schedules it
+  or ships the output off the machine. For anything real, that means a cron job
+  writing to object storage — a backup on the same volume does not survive the
+  failure it exists to protect against.
+- **No password reset**, so a forgotten password means a new account.
+- **The fingerprint proves integrity, not identity.** It shows the file is
+  unaltered since DocFlow issued it; binding a certified identity to a signature
+  means PAdES, which is a different piece of work.
 
 ## Design notes
 

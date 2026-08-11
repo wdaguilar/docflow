@@ -9,6 +9,7 @@
     "build": "cd web && bun run build",
     "test": "cd server && bun test && cd ../web && bun test",
     "seed": "cd server && bun src/seed.ts",
-    "start": "cd server && bun src/index.ts"
+    "start": "cd server && bun src/index.ts",
+    "backup": "cd server && bun src/backup.ts"
   }
 }

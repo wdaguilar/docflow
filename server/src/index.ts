@@ -2,6 +2,7 @@ import { Elysia, t } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { authContext, authRoutes } from "./auth";
 import { resolveExpiry, validateFields, validateSigners } from "./lib/recipients";
+import { RateLimiter, TOKEN_RULE, UPLOAD_RULE, VERIFY_RULE } from "./lib/ratelimit";
 import { staticPlugin } from "@elysiajs/static";
 import { existsSync } from "node:fs";
 import { db } from "./db";
@@ -15,6 +16,18 @@ import * as mail from "./lib/mailer";
 const PORT = Number(process.env.PORT ?? 3000);
 const PUBLIC_URL = process.env.PUBLIC_URL ?? `http://localhost:5173`;
 const MAX_UPLOAD = 15 * 1024 * 1024;
+const PROD = process.env.NODE_ENV === "production";
+
+const tokenLimiter = new RateLimiter(TOKEN_RULE);
+const uploadLimiter = new RateLimiter(UPLOAD_RULE);
+const verifyLimiter = new RateLimiter(VERIFY_RULE);
+
+// Lapsed buckets are dropped periodically so the maps cannot grow unbounded.
+setInterval(() => {
+  tokenLimiter.sweep();
+  uploadLimiter.sweep();
+  verifyLimiter.sweep();
+}, 300_000).unref?.();
 
 /** Owner of documents created before accounts existed, and of seeded demo data. */
 const LEGACY_OWNER = process.env.OWNER_EMAIL ?? "alex@docflow.app";
@@ -25,7 +38,16 @@ const clientIp = (req: Request, server: { requestIP?: (r: Request) => { address:
   null;
 
 const app = new Elysia()
-  .use(cors({ credentials: true, origin: true }))
+  // In production the SPA is served from this same origin, so no cross-origin
+  // caller is legitimate. Reflecting any origin while allowing credentials
+  // would let a hostile page read authenticated responses.
+  .use(
+    cors(
+      PROD
+        ? { credentials: true, origin: new URL(PUBLIC_URL).host }
+        : { credentials: true, origin: true },
+    ),
+  )
   .use(authRoutes)
   .use(authContext)
   .onError(({ code, error, set }) => {
@@ -33,9 +55,11 @@ const app = new Elysia()
       set.status = 404;
       return { error: "not_found" };
     }
+    // Log the detail, return none of it: internal messages leak file paths,
+    // SQL fragments, and library versions.
     console.error(error);
     set.status = set.status && Number(set.status) >= 400 ? set.status : 500;
-    return { error: error instanceof Error ? error.message : "server_error" };
+    return { error: "server_error" };
   })
 
   .get("/api/health", () => ({ ok: true, at: Date.now() }))
@@ -71,6 +95,14 @@ const app = new Elysia()
     "/api/documents",
     async ({ body, set, request, server, user }) => {
       if (!user) return (set.status = 401), { error: "unauthenticated" };
+
+      const gate = uploadLimiter.check(user.id);
+      if (!gate.allowed) {
+        set.status = 429;
+        set.headers["retry-after"] = String(Math.ceil(gate.retryAfterMs / 1000));
+        return { error: "rate_limited", message: "Too many uploads. Try again shortly." };
+      }
+
       const file = body.file;
       if (!file || file.size === 0) {
         set.status = 400;
@@ -332,6 +364,13 @@ const app = new Elysia()
 
   // ── Signer ─────────────────────────────────────────────────────────────
   .get("/api/sign/:token", ({ params, set, request, server }) => {
+    const gate = tokenLimiter.check(clientIp(request, server as never) ?? "unknown");
+    if (!gate.allowed) {
+      set.status = 429;
+      set.headers["retry-after"] = String(Math.ceil(gate.retryAfterMs / 1000));
+      return { error: "rate_limited" };
+    }
+
     const signer = repo.getSignerByToken(params.token);
     const doc = signer ? repo.getDocument(signer.document_id) : null;
     const verdict = checkAccess({
@@ -363,12 +402,29 @@ const app = new Elysia()
     };
   })
 
-  .get("/api/sign/:token/file", ({ params, set }) => {
+  .get("/api/sign/:token/file", ({ params, set, request, server }) => {
+    const gate = tokenLimiter.check(clientIp(request, server as never) ?? "unknown");
+    if (!gate.allowed) {
+      set.status = 429;
+      set.headers["retry-after"] = String(Math.ceil(gate.retryAfterMs / 1000));
+      return { error: "rate_limited" };
+    }
+
     const signer = repo.getSignerByToken(params.token);
-    if (!signer) return (set.status = 404), { error: "not_found" };
-    const doc = repo.getDocument(signer.document_id)!;
+    const doc = signer ? repo.getDocument(signer.document_id) : null;
+    // The same gate as the metadata route. Without it, an expired, voided, or
+    // already-used token still downloaded the live document.
+    const verdict = checkAccess({
+      signer: signer ? { status: signer.status } : null,
+      document: doc ? { status: doc.status, expiresAt: doc.expires_at } : null,
+    });
+    if (verdict !== "ok") {
+      set.status = verdict === "not_found" ? 404 : 403;
+      return { error: verdict };
+    }
+
     // Signers see the running copy, so signature #2 sees signature #1 in place.
-    const name = doc.working_path ?? doc.original_path;
+    const name = doc!.working_path ?? doc!.original_path;
     set.headers["content-type"] = "application/pdf";
     return Bun.file(repo.filePath(name));
   })
@@ -504,7 +560,21 @@ const app = new Elysia()
 
   .post(
     "/api/verify",
-    async ({ body, set }) => {
+    async ({ body, set, request, server }) => {
+      const gate = verifyLimiter.check(clientIp(request, server as never) ?? "unknown");
+      if (!gate.allowed) {
+        set.status = 429;
+        set.headers["retry-after"] = String(Math.ceil(gate.retryAfterMs / 1000));
+        return { error: "rate_limited" };
+      }
+
+      // This endpoint needs no account, so an unbounded body would let anyone
+      // exhaust memory by uploading a huge file.
+      if (body.file.size > MAX_UPLOAD) {
+        set.status = 413;
+        return { error: "file_too_large", limit: MAX_UPLOAD };
+      }
+
       const bytes = new Uint8Array(await body.file.arrayBuffer());
       const digest = await sha256(bytes);
       const match = db
