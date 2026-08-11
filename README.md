@@ -4,7 +4,7 @@ An e-signing application. Upload a PDF, place signature boxes on it, send it to
 one or more signers, and get the executed copy back with a certificate page and
 a tamper-evident fingerprint.
 
-**Live URL:** _add your deployed URL here_
+**Live URL:** [Docflow_](https://docflow-production-83f4.up.railway.app)
 
 ---
 
@@ -113,7 +113,6 @@ bun run build && bun run start
 | `PORT` | `3000` | HTTP port |
 | `DATA_DIR` | `./data` | SQLite file and stored PDFs |
 | `PUBLIC_URL` | `http://localhost:5173` | Origin used to build signing links in emails |
-| `OWNER_EMAIL` | `alex@docflow.app` | Email used for the seeded demo account |
 | `SEED_PASSWORD` | `docflow-demo-2026` | Password for the seeded demo account |
 | `RESEND_API_KEY` | _unset_ | Enables real email; without it, mail is logged and links stay available in the dashboard |
 | `MAIL_FROM` | `DocFlow <onboarding@resend.dev>` | Sender address |
